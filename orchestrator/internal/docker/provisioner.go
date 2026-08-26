@@ -30,6 +30,9 @@ type Provisioner struct {
 	// forward-auth requests for the same user cannot race (docker rejects
 	// duplicate container names).
 	locks sync.Map
+	// per-user flag set once a boot was verified with a populated provider
+	// list; Ready fast-paths on health alone afterwards.
+	providersVerified sync.Map
 }
 
 type Config struct {
@@ -224,15 +227,21 @@ func (p *Provisioner) create(ctx context.Context, u *userprov.User, name string)
 	return nil
 }
 
-// Ready probes the container's /health until the managed OpenCode server
-// reports ready (the UI answers HTTP 200 before OpenCode is usable, so the
-// probe requires isOpenCodeReady=true) or the timeout elapses.
+// Ready probes the container until the model picker would work: /health must
+// report isOpenCodeReady=true AND /api/config/providers (behind the shared UI
+// session) must list at least one provider. Both answer 200 before that — the
+// app boots its HTTP layer and the opencode subprocess in stages — so without
+// the providers check the browser lands in a chat whose model list is still
+// empty and needs a manual reload. The login only needs to succeed once and is
+// kept short so the per-poll cost is one cheap request.
 func (p *Provisioner) Ready(ctx context.Context, u *userprov.User) error {
 	name := p.ContainerName(u.Username)
 	addr := net.JoinHostPort(name, "3000")
+	healthURL := "http://" + addr + "/health"
+	providersURL := "http://" + addr + "/api/config/providers"
 	deadline := time.Now().Add(p.cfg.ReadyTimeout)
 	for time.Now().Before(deadline) {
-		req, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://"+addr+"/health", nil)
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, healthURL, nil)
 		if err != nil {
 			return err
 		}
@@ -241,7 +250,13 @@ func (p *Provisioner) Ready(ctx context.Context, u *userprov.User) error {
 			body, _ := io.ReadAll(io.LimitReader(resp.Body, 64<<10))
 			resp.Body.Close()
 			if resp.StatusCode < 500 && bytes.Contains(body, []byte(`"isOpenCodeReady":true`)) {
-				return nil
+				if _, ok := p.providersVerified.Load(u.Username); ok {
+					return nil
+				}
+				if p.providersListed(ctx, providersURL, u) {
+					p.providersVerified.Store(u.Username, true)
+					return nil
+				}
 			}
 		}
 		select {
@@ -251,6 +266,37 @@ func (p *Provisioner) Ready(ctx context.Context, u *userprov.User) error {
 		}
 	}
 	return fmt.Errorf("container %s not ready within %s", name, p.cfg.ReadyTimeout)
+}
+
+// providersListed logs into the UI (shared password) and checks that the
+// model-provider list is populated, mirroring what the chat's model picker
+// needs on first paint.
+func (p *Provisioner) providersListed(ctx context.Context, providersURL string, u *userprov.User) bool {
+	token, err := p.Login(ctx, u)
+	if err != nil {
+		return false
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, providersURL, nil)
+	if err != nil {
+		return false
+	}
+	req.Header.Set("Cookie", "oc_ui_session="+token)
+	resp, err := p.http.Do(req)
+	if err != nil {
+		return false
+	}
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	resp.Body.Close()
+	if resp.StatusCode >= 500 {
+		return false
+	}
+	// {"providers":[{...},...],...} — a non-empty array is the signal the
+	// picker has options; keep it tolerant of any extra fields upstream adds.
+	idx := bytes.Index(body, []byte(`"providers":[`))
+	if idx < 0 {
+		return false
+	}
+	return bytes.IndexByte(body[idx+len(`"providers":[`):], ']') > 0
 }
 
 // Login performs the UI password session login inside the container and
