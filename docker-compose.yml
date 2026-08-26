@@ -44,6 +44,8 @@ services:
       ORCH_IDLE_PAUSE: "30m"
       ORCH_IDLE_STOP: "24h"
       ORCH_READY_TIMEOUT: "5m"
+      ORCH_USER_MODELS: "${ORCH_USER_MODELS:-deepseek-v4-flash}"
+      ORCH_ADMIN_MODELS: "${ORCH_ADMIN_MODELS:-deepseek-v4-flash,deepseek-v4-pro,deepseek-v4-flash-vision-exp,glm-5.1,glm-5.2,glm-5.3,kimi-k2.6,kimi-k2.7-code,kimi-k3,mimo-v2.5,mimo-v2.5-pro,minimax-m2.7,minimax-m3,qwen3.6-plus,qwen3.7-max,qwen3.8-max,grok-4.6,gpt-5.6-luna}"
       ORCH_UI_PASSWORD: "${ORCH_UI_PASSWORD:?set: openssl rand -base64 24}"
       ORCH_JWT_SECRET: "${ORCH_JWT_SECRET:?set: openssl rand -base64 48}"
       ORCH_ADMIN_EMAILS: "${ORCH_ADMIN_EMAILS:?set admin emails, comma separated}"

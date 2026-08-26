@@ -35,6 +35,8 @@ func main() {
 		AdminEmails:   cfg.AdminEmails,
 		UIPassword:    cfg.UIPassword,
 		JWTSecret:     cfg.JWTSecret,
+		UserModels:    cfg.UserModels,
+		AdminModels:   cfg.AdminModels,
 	}, logger)
 	if err != nil {
 		logger.Error("docker client", "err", err)

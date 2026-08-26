@@ -3,6 +3,7 @@ package docker
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"log/slog"
@@ -50,6 +51,14 @@ type Config struct {
 	// login screen. Values come from the orchestrator's own env.
 	UIPassword string
 	JWTSecret  string
+
+	// Model access: whitelists written into each user's
+	// ~/.config/opencode/opencode.json. opencode intersects whitelists
+	// across config layers (/etc/opencode shared + per-user), so the shared
+	// config must NOT carry one (it would cap admins too); instead each
+	// user's own config declares its set.
+	UserModels  []string
+	AdminModels []string
 }
 
 func New(ctx context.Context, host string, cfg Config, logger *slog.Logger) (*Provisioner, error) {
@@ -147,6 +156,49 @@ func (p *Provisioner) Ensure(ctx context.Context, u *userprov.User) (ContainerSt
 	return st, nil
 }
 
+// writeModelWhitelist writes (or merges into) the user's per-user
+// ~/.config/opencode/opencode.json with an opencode-go whitelist. opencode
+// intersects whitelists across config layers, so this per-user file is the
+// only place a restriction can live without capping admins (the shared
+// /etc/opencode config must stay whitelist-free).
+func (p *Provisioner) writeModelWhitelist(u *userprov.User) error {
+	models := p.cfg.UserModels
+	if p.cfg.AdminEmails[strings.ToLower(strings.TrimSpace(u.Email))] && len(p.cfg.AdminModels) > 0 {
+		models = p.cfg.AdminModels
+	}
+	if len(models) == 0 {
+		return nil // no restriction configured
+	}
+
+	path := u.Home + "/.config/opencode/opencode.json"
+	doc := map[string]any{}
+	if b, err := os.ReadFile(path); err == nil {
+		_ = json.Unmarshal(b, &doc) // best effort: preserve any existing keys
+	}
+	prov, _ := doc["provider"].(map[string]any)
+	if prov == nil {
+		prov = map[string]any{}
+	}
+	og, _ := prov["opencode-go"].(map[string]any)
+	if og == nil {
+		og = map[string]any{}
+	}
+	og["whitelist"] = models
+	prov["opencode-go"] = og
+	doc["provider"] = prov
+
+	b, err := json.MarshalIndent(doc, "", "  ")
+	if err != nil {
+		return err
+	}
+	if err := os.WriteFile(path, b, 0o644); err != nil {
+		return err
+	}
+	_ = os.Chown(path, u.UID, u.UID)
+	p.logger.Info("docker: wrote model whitelist", "user", u.Username, "models", len(models))
+	return nil
+}
+
 func (p *Provisioner) userLock(username string) *sync.Mutex {
 	actual, _ := p.locks.LoadOrStore(username, &sync.Mutex{})
 	return actual.(*sync.Mutex)
@@ -170,6 +222,10 @@ func (p *Provisioner) create(ctx context.Context, u *userprov.User, name string)
 		if err := os.Chown(dir, u.UID, u.UID); err != nil {
 			p.logger.Warn("docker: chown state dir", "dir", dir, "err", err)
 		}
+	}
+
+	if err := p.writeModelWhitelist(u); err != nil {
+		return fmt.Errorf("model whitelist: %w", err)
 	}
 
 	binds := []string{

@@ -37,6 +37,13 @@ type Config struct {
 	// Admin
 	AdminEmails map[string]bool
 
+	// Model access: per-user opencode whitelists (written to each user's
+	// ~/.config/opencode/opencode.json; opencode intersects whitelists
+	// across config layers so the shared /etc/opencode config must not
+	// carry one).
+	UserModels  []string
+	AdminModels []string
+
 	// Shared per-user container auth (browser never sees it; the orchestrator
 	// logs in server-side and injects the session cookie).
 	UIPassword string
@@ -107,5 +114,19 @@ func loadConfig() Config {
 
 		UIPassword: env("ORCH_UI_PASSWORD", ""),
 		JWTSecret:  env("ORCH_JWT_SECRET", ""),
+
+		UserModels:  csvList(env("ORCH_USER_MODELS", "deepseek-v4-flash")),
+		AdminModels: csvList(env("ORCH_ADMIN_MODELS", "")),
 	}
+}
+
+// csvList splits a comma-separated env value into trimmed non-empty entries.
+func csvList(v string) []string {
+	var out []string
+	for _, e := range strings.Split(v, ",") {
+		if e = strings.TrimSpace(e); e != "" {
+			out = append(out, e)
+		}
+	}
+	return out
 }
