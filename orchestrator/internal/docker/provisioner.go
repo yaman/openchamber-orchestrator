@@ -1,8 +1,10 @@
 package docker
 
 import (
+	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"log/slog"
 	"net"
 	"net/http"
@@ -222,8 +224,9 @@ func (p *Provisioner) create(ctx context.Context, u *userprov.User, name string)
 	return nil
 }
 
-// Ready probes the container's /health until it answers or the timeout
-// elapses.
+// Ready probes the container's /health until the managed OpenCode server
+// reports ready (the UI answers HTTP 200 before OpenCode is usable, so the
+// probe requires isOpenCodeReady=true) or the timeout elapses.
 func (p *Provisioner) Ready(ctx context.Context, u *userprov.User) error {
 	name := p.ContainerName(u.Username)
 	addr := net.JoinHostPort(name, "3000")
@@ -235,8 +238,9 @@ func (p *Provisioner) Ready(ctx context.Context, u *userprov.User) error {
 		}
 		resp, err := p.http.Do(req)
 		if err == nil {
+			body, _ := io.ReadAll(io.LimitReader(resp.Body, 64<<10))
 			resp.Body.Close()
-			if resp.StatusCode < 500 {
+			if resp.StatusCode < 500 && bytes.Contains(body, []byte(`"isOpenCodeReady":true`)) {
 				return nil
 			}
 		}
