@@ -304,6 +304,12 @@ func (p *Provisioner) create(ctx context.Context, u *userprov.User, name string)
 	p.logger.Info("docker: creating container", "container", name, "image", p.cfg.Image)
 
 	// Bind-mount sources must exist on the host before the container starts.
+	if err := os.MkdirAll(u.Home+"/.config", 0o700); err != nil {
+		return fmt.Errorf("mkdir %s: %w", u.Home+"/.config", err)
+	}
+	if err := os.Chown(u.Home+"/.config", u.UID, u.UID); err != nil {
+		p.logger.Warn("docker: chown config dir", "dir", u.Home+"/.config", "err", err)
+	}
 	for _, dir := range []string{
 		u.Home + "/.config/opencode",
 		u.Home + "/.config/openchamber",
