@@ -6,7 +6,9 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/docker/docker/api/types/container"
@@ -22,6 +24,10 @@ type Provisioner struct {
 	cfg    Config
 	logger *slog.Logger
 	http   *http.Client
+	// per-user mutexes serialize create/start transitions so parallel
+	// forward-auth requests for the same user cannot race (docker rejects
+	// duplicate container names).
+	locks sync.Map
 }
 
 type Config struct {
@@ -103,8 +109,13 @@ func (p *Provisioner) state(ctx context.Context, name string) (ContainerState, e
 }
 
 // Ensure returns the container to the running state: creates it on first
-// login, unpauses it when paused, starts it when stopped.
+// login, unpauses it when paused, starts it when stopped. Serialized per
+// user so parallel requests cannot race create/start.
 func (p *Provisioner) Ensure(ctx context.Context, u *userprov.User) (ContainerState, error) {
+	lock := p.userLock(u.Username)
+	lock.Lock()
+	defer lock.Unlock()
+
 	name := p.ContainerName(u.Username)
 	st, err := p.state(ctx, name)
 	if err != nil {
@@ -131,12 +142,42 @@ func (p *Provisioner) Ensure(ctx context.Context, u *userprov.User) (ContainerSt
 	return st, nil
 }
 
+func (p *Provisioner) userLock(username string) *sync.Mutex {
+	actual, _ := p.locks.LoadOrStore(username, &sync.Mutex{})
+	return actual.(*sync.Mutex)
+}
+
 func (p *Provisioner) create(ctx context.Context, u *userprov.User, name string) error {
 	p.logger.Info("docker: creating container", "container", name, "image", p.cfg.Image)
 
+	// Bind-mount sources must exist on the host before the container starts.
+	for _, dir := range []string{
+		u.Home + "/.config/opencode",
+		u.Home + "/.config/openchamber",
+		u.Home + "/.local/share/opencode",
+		u.Home + "/.local/state/opencode",
+		u.Home + "/.ssh",
+		u.Home + "/workspaces",
+	} {
+		if err := os.MkdirAll(dir, 0o700); err != nil {
+			return fmt.Errorf("mkdir %s: %w", dir, err)
+		}
+		if err := os.Chown(dir, u.UID, u.UID); err != nil {
+			p.logger.Warn("docker: chown state dir", "dir", dir, "err", err)
+		}
+	}
+
 	binds := []string{
-		// The real user's home on the host — their config is their own.
-		u.Home + ":" + u.Home,
+		// Per-user state dirs from the real home on the VM, bound at the
+		// image's natural paths. The image's app lives at /home/openchamber,
+		// so only these subdirs are overlaid — nothing is shadowed and the
+		// entrypoint's hardcoded paths work as-is.
+		u.Home + "/.config/opencode:/home/openchamber/.config/opencode",
+		u.Home + "/.config/openchamber:/home/openchamber/.config/openchamber",
+		u.Home + "/.local/share/opencode:/home/openchamber/.local/share/opencode",
+		u.Home + "/.local/state/opencode:/home/openchamber/.local/state/opencode",
+		u.Home + "/.ssh:/home/openchamber/.ssh",
+		u.Home + "/workspaces:/home/openchamber/workspaces",
 	}
 	isAdmin := p.cfg.AdminEmails[strings.ToLower(strings.TrimSpace(u.Email))]
 	if isAdmin {
@@ -156,8 +197,7 @@ func (p *Provisioner) create(ctx context.Context, u *userprov.User, name string)
 		Image: p.cfg.Image,
 		User:  fmt.Sprintf("%d:%d", u.UID, u.UID),
 		Env: append([]string{
-			"HOME=" + u.Home,
-			"XDG_CONFIG_HOME=" + u.Home + "/.config",
+			"HOME=/home/openchamber",
 			"OPENCHAMBER_UI_PASSWORD=" + p.cfg.UIPassword,
 			"OPENCODE_JWT_SECRET=" + p.cfg.JWTSecret,
 			"OPENCHAMBER_HOST=0.0.0.0",
