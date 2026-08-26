@@ -29,7 +29,7 @@ jobs:
       - uses: docker/metadata-action@v5
         id: meta
         with:
-          images: ghcr.io/worqco/openchamber-orchestrator/orchestrator
+          images: ghcr.io/yaman/openchamber-orchestrator/orchestrator
           tags: |
             type=raw,value=latest
             type=sha
@@ -62,7 +62,7 @@ jobs:
         run: |
           V=$(cat .openchamber-version)
           echo "version=$V" >> "$GITHUB_OUTPUT"
-          echo "image=ghcr.io/worqco/openchamber-orchestrator/openchamber:$V" >> "$GITHUB_OUTPUT"
+          echo "image=ghcr.io/yaman/openchamber-orchestrator/openchamber:$V" >> "$GITHUB_OUTPUT"
           echo "Building OpenChamber $V from upstream tag v$V"
 
       - uses: actions/checkout@v4
