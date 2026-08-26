@@ -25,6 +25,7 @@ services:
     user: "0:0"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
+      - /root/.ssh:/root/.ssh
       - /etc/passwd:/etc/passwd
       - /etc/group:/etc/group
       - /etc/shadow:/etc/shadow
