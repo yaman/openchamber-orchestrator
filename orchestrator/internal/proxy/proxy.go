@@ -126,8 +126,7 @@ func (h *Handler) Handle(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	state, err := h.prov.Ensure(ctx, u)
-	if err != nil {
+	if _, err := h.prov.Ensure(ctx, u); err != nil {
 		h.logger.Error("proxy: ensure failed", "user", u.Username, "err", err)
 		http.Error(w, "could not start your workspace", http.StatusInternalServerError)
 		return
@@ -136,12 +135,10 @@ func (h *Handler) Handle(w http.ResponseWriter, r *http.Request) {
 	readyCtx, cancel := context.WithTimeout(ctx, probeWait)
 	defer cancel()
 	if err := h.prov.Ready(readyCtx, u); err != nil {
-		if state == docker.StateAbsent {
-			h.serveWaiting(w, r, u)
-			return
-		}
-		h.logger.Error("proxy: container not ready", "user", u.Username, "err", err)
-		http.Error(w, "workspace is taking too long to start", http.StatusGatewayTimeout)
+		// Any state (absent, paused, stopped, or a restarting container)
+		// gets the waiting page; its /ready poller keeps probing with the
+		// full timeout and redirects back once the app answers.
+		h.serveWaiting(w, r, u)
 		return
 	}
 
