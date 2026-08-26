@@ -15,7 +15,7 @@ services:
 
   orchestrator:
     image: ghcr.io/yaman/openchamber-orchestrator/orchestrator:latest
-    pull_policy: always
+    pull_policy: missing
     build: ./orchestrator
     container_name: orchestrator
     restart: unless-stopped
@@ -35,7 +35,7 @@ services:
       ORCH_LISTEN: ":8080"
       ORCH_OAUTH2_PROXY_URL: "http://oauth2-proxy:4180"
       ORCH_ALLOWED_DOMAIN: "worqcompany.com"
-      ORCH_IMAGE: "ghcr.io/yaman/openchamber-orchestrator/openchamber:${OPENCHAMBER_VERSION:-1.20.0}"
+      ORCH_IMAGE: "${OPENCHAMBER_IMAGE:-openchamber:1.20.0}"
       ORCH_NETWORK: "openchamber_default"
       ORCH_USER_BASE_DIR: "/home"
       ORCH_MEM_MB: "4096"
