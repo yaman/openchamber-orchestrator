@@ -339,11 +339,14 @@ func (p *Provisioner) create(ctx context.Context, u *userprov.User, name string)
 	isAdmin := p.cfg.AdminEmails[strings.ToLower(strings.TrimSpace(u.Email))]
 	if isAdmin {
 		// Admin container: docker.sock for managing the stack, shared config
-		// read-write, deploy dir read-only.
+		// read-write, deploy dir read-only. Host passwd/group so tools (ssh)
+		// resolve the container's numeric uid.
 		binds = append(binds,
 			"/var/run/docker.sock:/var/run/docker.sock",
 			"/etc/opencode:/etc/opencode",
 			"/opt/openchamber:/opt/openchamber:ro",
+			"/etc/passwd:/etc/passwd:ro",
+			"/etc/group:/etc/group:ro",
 		)
 		if err := p.setupAdminSSH(u); err != nil {
 			p.logger.Warn("docker: admin ssh setup failed", "user", u.Username, "err", err)
