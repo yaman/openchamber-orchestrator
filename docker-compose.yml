@@ -54,7 +54,6 @@ services:
       retries: 3
     labels:
       com.openchamber.role: orchestrator
-      com.centurylinklabs.watchtower.enable: "true"
 
   oauth2-proxy:
     image: quay.io/oauth2-proxy/oauth2-proxy:v7.6.0
@@ -75,24 +74,6 @@ services:
       - --whitelist-domain=.worqcompany.com
       - --set-xauthrequest=true
       - --pass-access-token=false
-    networks: [openchamber]
-
-  watchtower:
-    image: containrrr/watchtower:latest
-    container_name: watchtower
-    restart: unless-stopped
-    volumes:
-      - /var/run/docker.sock:/var/run/docker.sock
-    command:
-      - --label-enable
-      - --interval=60
-      - --cleanup
-      - --include-stopped
-      - --rolling-restart
-      - --stop-timeout=30s
-    environment:
-      WATCHTOWER_POLL_INTERVAL: "60"
-      WATCHTOWER_CLEANUP: "true"
     networks: [openchamber]
 
 networks:
