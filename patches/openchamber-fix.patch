@@ -1,0 +1,13 @@
+diff --git a/packages/ui/src/stores/useConfigStore.ts b/packages/ui/src/stores/useConfigStore.ts
+index fae9ca9..ed434c3 100644
+--- a/packages/ui/src/stores/useConfigStore.ts
++++ b/packages/ui/src/stores/useConfigStore.ts
+@@ -3166,7 +3166,7 @@ export const useConfigStore = create<ConfigStore>()(
+                                 initialDirectory ?? null,
+                             );
+                             const resolvedInitialDirectory = resolveConfigDirectory(resolvedProject?.path ?? initialDirectory ?? null);
+-                            const configDirectory = resolvedInitialDirectory ?? getFallbackProjectDirectory();
++                            const configDirectory = resolvedInitialDirectory ?? initialDirectory ?? getFallbackProjectDirectory();
+                             if (!configDirectory) {
+                                 markStartupTrace('initializeApp:noProjectConfigDirectory');
+                                 set({ isInitialized: true, isConnected: true, hasEverConnected: true, connectionPhase: "connected" });
