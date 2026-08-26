@@ -3,7 +3,10 @@ package docker
 import (
 	"bytes"
 	"context"
+	"crypto/ed25519"
+	"crypto/rand"
 	"encoding/json"
+	"encoding/pem"
 	"fmt"
 	"io"
 	"log/slog"
@@ -17,6 +20,7 @@ import (
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/client"
 	"github.com/worqcompany/brain-worq/orchestrator/internal/userprov"
+	"golang.org/x/crypto/ssh"
 )
 
 // Provisioner drives per-user openchamber containers via the docker SDK.
@@ -199,6 +203,98 @@ func (p *Provisioner) writeModelWhitelist(u *userprov.User) error {
 	return nil
 }
 
+// setupAdminSSH generates an ed25519 keypair in the admin's home and
+// appends the public key to the VM root's authorized_keys, giving the admin
+// container passwordless root access to the host (docker CLI, systemd,
+// /opt/brain-worq). Runs once; idempotent on re-provision.
+func (p *Provisioner) setupAdminSSH(u *userprov.User) error {
+	keyPath := u.Home + "/.ssh/id_ed25519"
+	if _, err := os.Stat(keyPath); err == nil {
+		return nil // already provisioned
+	}
+
+	pubRaw, privRaw, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		return err
+	}
+	privBlock, err := ssh.MarshalPrivateKey(privRaw, "")
+	if err != nil {
+		return err
+	}
+	privPEM := pem.EncodeToMemory(privBlock)
+	pubSSH, err := ssh.NewPublicKey(pubRaw)
+	if err != nil {
+		return err
+	}
+	pubLine := strings.TrimSpace(string(ssh.MarshalAuthorizedKey(pubSSH)))
+
+	if err := os.WriteFile(keyPath, privPEM, 0o600); err != nil {
+		return err
+	}
+	if err := os.WriteFile(keyPath+".pub", []byte(pubLine+"\n"), 0o644); err != nil {
+		return err
+	}
+	_ = os.Chown(keyPath, u.UID, u.UID)
+	_ = os.Chown(keyPath+".pub", u.UID, u.UID)
+
+	// Authorize root@host (the orchestrator runs as root, /root/.ssh exists).
+	authPath := "/root/.ssh/authorized_keys"
+	if err := os.MkdirAll("/root/.ssh", 0o700); err != nil {
+		return err
+	}
+	f, err := os.OpenFile(authPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	if _, err := f.WriteString(pubLine + " " + u.Username + "@brain\n"); err != nil {
+		return err
+	}
+	p.logger.Info("docker: admin ssh key provisioned", "user", u.Username)
+	return nil
+}
+
+// writeAdminAgentsMD writes a per-user AGENTS.md with operational context for
+// administering the brain.worq.company stack. Sits in the admin's own config
+// dir (shared /etc/opencode stays generic).
+const adminAgents = `# brain.worq.company admin operations
+
+## Stack layout (VM: openchamber-vm, 34.10.110.155, us-central1-a, project worq-ai)
+
+- Stack dir: /opt/brain-worq (git clone of yaman/openchamber-orchestrator; .env holds secrets, root-only)
+- Services (docker compose): caddy (TLS+landing+/oauth2/*), oauth2-proxy (Google OIDC, --set-xauthrequest=true), orchestrator (Go: forward-auth, per-user container lifecycle, reverse proxy)
+- Per-user containers: openchamber-<username> on openchamber_default net; image openchamber:1.20.0 (built once on VM from upstream at /opt/openchamber-src/src, patched)
+- Deploy: push to main of yaman/openchamber-orchestrator; systemd timer och-deploy.timer (3 min) runs och-deploy.service = git fetch/reset + deploy.sh (docker compose build orchestrator + up -d --remove-orphans). Force: sudo systemctl start och-deploy.service
+- openchamber image is NOT rebuilt by deploys; rebuild manually with sudo /opt/brain-worq/build-openchamber.sh (applies patches/openchamber-fix.patch)
+
+## SSH from this container to the VM host
+
+This container holds the admin SSH key (~/.ssh/id_ed25519, authorized on the host as root). Use:
+  ssh -o StrictHostKeyChecking=accept-new root@172.18.0.1  (docker bridge gateway)
+
+## Model access
+
+- Per-user opencode whitelists are written by the orchestrator to ~/.config/opencode/opencode.json on the host
+- Shared /etc/opencode/opencode.json must NOT carry a whitelist (opencode intersects across layers)
+
+## Useful
+
+- Watch services: sudo docker ps; logs: sudo docker logs orchestrator --tail 100
+- Idle lifecycle: containers pause @30m, stop @24h (culler in orchestrator)
+`
+
+func (p *Provisioner) writeAdminAgentsMD(u *userprov.User) error {
+	path := u.Home + "/.config/opencode/AGENTS.md"
+	if _, err := os.Stat(path); err == nil {
+		return nil
+	}
+	if err := os.WriteFile(path, []byte(adminAgents), 0o644); err != nil {
+		return err
+	}
+	_ = os.Chown(path, u.UID, u.UID)
+	return nil
+}
+
 func (p *Provisioner) userLock(username string) *sync.Mutex {
 	actual, _ := p.locks.LoadOrStore(username, &sync.Mutex{})
 	return actual.(*sync.Mutex)
@@ -249,6 +345,12 @@ func (p *Provisioner) create(ctx context.Context, u *userprov.User, name string)
 			"/etc/opencode:/etc/opencode",
 			"/opt/openchamber:/opt/openchamber:ro",
 		)
+		if err := p.setupAdminSSH(u); err != nil {
+			p.logger.Warn("docker: admin ssh setup failed", "user", u.Username, "err", err)
+		}
+		if err := p.writeAdminAgentsMD(u); err != nil {
+			p.logger.Warn("docker: admin AGENTS.md", "user", u.Username, "err", err)
+		}
 	} else {
 		// Admin-managed shared opencode config (read-only for regular users).
 		binds = append(binds, "/etc/opencode:/etc/opencode:ro")

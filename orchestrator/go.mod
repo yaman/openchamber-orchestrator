@@ -2,7 +2,10 @@ module github.com/worqcompany/brain-worq/orchestrator
 
 go 1.26.5
 
-require github.com/docker/docker v28.5.1+incompatible
+require (
+	github.com/docker/docker v28.5.1+incompatible
+	golang.org/x/crypto v0.55.0
+)
 
 require (
 	github.com/Microsoft/go-winio v0.6.2 // indirect
