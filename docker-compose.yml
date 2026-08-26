@@ -1,0 +1,84 @@
+services:
+  caddy:
+    image: caddy:2.9
+    container_name: caddy
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./landing:/srv
+      - caddy_data:/data
+      - caddy_config:/config
+    networks: [openchamber]
+
+  orchestrator:
+    build: ./orchestrator
+    container_name: orchestrator
+    restart: unless-stopped
+    networks: [openchamber]
+    # Root + host mounts: creates real Linux users, talks to docker, sees
+    # /etc/opencode and /home for bind-mounting into per-user containers.
+    user: "0:0"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - /etc/passwd:/etc/passwd
+      - /etc/group:/etc/group
+      - /etc/shadow:/etc/shadow
+      - /home:/home:shared
+      - /etc/opencode:/etc/opencode:ro
+      - /opt/openchamber:/opt/openchamber:ro
+    environment:
+      ORCH_LISTEN: ":8080"
+      ORCH_OAUTH2_PROXY_URL: "http://oauth2-proxy:4180"
+      ORCH_ALLOWED_DOMAIN: "worqcompany.com"
+      ORCH_IMAGE: "openchamber:1.20.0"
+      ORCH_NETWORK: "openchamber_default"
+      ORCH_USER_BASE_DIR: "/home"
+      ORCH_MEM_MB: "4096"
+      ORCH_CPU: "2"
+      ORCH_PIDS_LIMIT: "512"
+      ORCH_IDLE_PAUSE: "30m"
+      ORCH_IDLE_STOP: "24h"
+      ORCH_READY_TIMEOUT: "5m"
+      ORCH_UI_PASSWORD: "${ORCH_UI_PASSWORD:?set: openssl rand -base64 24}"
+      ORCH_JWT_SECRET: "${ORCH_JWT_SECRET:?set: openssl rand -base64 48}"
+      ORCH_ADMIN_EMAILS: "${ORCH_ADMIN_EMAILS:?set admin emails, comma separated}"
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    labels:
+      com.openchamber.role: orchestrator
+
+  oauth2-proxy:
+    image: quay.io/oauth2-proxy/oauth2-proxy:v7.6.0
+    container_name: oauth2-proxy
+    restart: unless-stopped
+    command:
+      - --provider=google
+      - --client-id=${GOOGLE_CLIENT_ID}
+      - --client-secret=${GOOGLE_CLIENT_SECRET}
+      - --cookie-secret=${COOKIE_SECRET:?generate: openssl rand -base64 32}
+      - --cookie-domain=brain.worq.company
+      - --cookie-secure=true
+      - --cookie-name=_oauth2_proxy
+      - --oidc-issuer-url=https://accounts.google.com
+      - --email-domain=worqcompany.com
+      - --http-address=0.0.0.0:4180
+      - --upstream=static://200
+      - --whitelist-domain=.worqcompany.com
+      - --set-xauthrequest=true
+      - --pass-access-token=false
+    networks: [openchamber]
+
+networks:
+  openchamber:
+    name: openchamber_default
+    driver: bridge
+
+volumes:
+  caddy_data:
+  caddy_config:

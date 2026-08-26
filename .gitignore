@@ -1,0 +1,3 @@
+.env
+orchestrator/orchestrator
+*.tar.gz

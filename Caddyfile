@@ -1,0 +1,67 @@
+{
+	auto_https disable_redirects
+}
+
+# brain.worq.company — per-user openchamber behind Google OIDC.
+# Edge: Caddy (TLS, static landing, oauth2-proxy passthrough).
+# Traffic: Caddy -> orchestrator:8080 -> openchamber-<user>:3000.
+# Orchestrator does session validation, container wake, and proxying, so
+# Caddy only needs to terminate TLS and route everything to it.
+
+brain.worq.company {
+	log {
+		output stdout
+	}
+	encode gzip
+
+	# oauth2-proxy owns the OIDC handshake endpoints.
+	handle /oauth2/* {
+		reverse_proxy oauth2-proxy:4180
+	}
+
+	# Landing page for unauthenticated visitors. The orchestrator redirects
+	# to /oauth2/start when there is no session, so this only serves the
+	# pre-auth marketing/landing page.
+	@noauth {
+		not header_regexp Cookie _oauth2_proxy
+		path /
+	}
+	handle @noauth {
+		root * /srv
+		try_files /landing.html =404
+		header Cache-Control "no-store, must-revalidate"
+		file_server
+	}
+
+	# Everything else: forward_auth through the orchestrator (session check +
+	# container wake), then proxy all traffic (HTTP, WebSocket, SSE) there.
+	handle {
+		forward_auth orchestrator:8080 {
+			uri /oauth2/auth
+			header_up X-Forwarded-Proto {scheme}
+			header_up X-Forwarded-Host {host}
+			header_up X-Forwarded-Uri {uri}
+			copy_headers X-Auth-Request-Email X-Auth-Request-User
+		}
+		reverse_proxy orchestrator:8080 {
+			header_up X-Forwarded-User {http.request.header.X-Auth-Request-Email}
+			header_up X-Forwarded-Email {http.request.header.X-Auth-Request-Email}
+			header_up Host {host}
+			header_up X-Real-IP {remote_host}
+			header_up X-Forwarded-For {remote_host}
+			header_up X-Forwarded-Proto {scheme}
+			# Long-lived SSE/terminal streams.
+			stream_timeout 1h
+		}
+	}
+
+	handle_errors {
+		@unauthorized {
+			expression {http.error.status_code} == 401
+		}
+		handle @unauthorized {
+			redir /oauth2/start?rd={http.request.uri} temporary
+		}
+		respond "{http.error.status_code} {http.error.status_text}" {http.error.status_code}
+	}
+}
