@@ -14,6 +14,8 @@ services:
     networks: [openchamber]
 
   orchestrator:
+    image: ghcr.io/worqco/openchamber-orchestrator/orchestrator:latest
+    pull_policy: always
     build: ./orchestrator
     container_name: orchestrator
     restart: unless-stopped
@@ -52,6 +54,7 @@ services:
       retries: 3
     labels:
       com.openchamber.role: orchestrator
+      com.centurylinklabs.watchtower.enable: "true"
 
   oauth2-proxy:
     image: quay.io/oauth2-proxy/oauth2-proxy:v7.6.0
@@ -61,7 +64,7 @@ services:
       - --provider=google
       - --client-id=${GOOGLE_CLIENT_ID}
       - --client-secret=${GOOGLE_CLIENT_SECRET}
-      - --cookie-secret=${COOKIE_SECRET:?generate: openssl rand -base64 32}
+      - "--cookie-secret=${COOKIE_SECRET:?generate: openssl rand -base64 32}"
       - --cookie-domain=brain.worq.company
       - --cookie-secure=true
       - --cookie-name=_oauth2_proxy
@@ -72,6 +75,24 @@ services:
       - --whitelist-domain=.worqcompany.com
       - --set-xauthrequest=true
       - --pass-access-token=false
+    networks: [openchamber]
+
+  watchtower:
+    image: containrrr/watchtower:latest
+    container_name: watchtower
+    restart: unless-stopped
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    command:
+      - --label-enable
+      - --interval=60
+      - --cleanup
+      - --include-stopped
+      - --rolling-restart
+      - --stop-timeout=30s
+    environment:
+      WATCHTOWER_POLL_INTERVAL: "60"
+      WATCHTOWER_CLEANUP: "true"
     networks: [openchamber]
 
 networks:
