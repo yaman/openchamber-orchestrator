@@ -55,6 +55,10 @@ type Config struct {
 	// login screen. Values come from the orchestrator's own env.
 	UIPassword string
 	JWTSecret  string
+	// PublicHost is the portless public hostname presented to openchamber's
+	// login so it issues the bare oc_ui_session cookie (it scopes the name by
+	// request port: oc_ui_session_<port> otherwise).
+	PublicHost string
 
 	// Model access: whitelists written into each user's
 	// ~/.config/opencode/opencode.json. opencode intersects whitelists
@@ -478,6 +482,12 @@ func (p *Provisioner) Login(ctx context.Context, u *userprov.User) (string, erro
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, "http://"+addr+"/auth/session", strings.NewReader(body))
 	if err != nil {
 		return "", err
+	}
+	// Present the portless public host: openchamber names the session cookie
+	// oc_ui_session_<port> when the request host carries a port, and the
+	// browser (reaching us via the public hostname) validates the bare name.
+	if p.cfg.PublicHost != "" {
+		req.Host = p.cfg.PublicHost
 	}
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := p.http.Do(req)

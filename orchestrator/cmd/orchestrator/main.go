@@ -35,6 +35,7 @@ func main() {
 		AdminEmails:   cfg.AdminEmails,
 		UIPassword:    cfg.UIPassword,
 		JWTSecret:     cfg.JWTSecret,
+		PublicHost:    cfg.PublicHost,
 		UserModels:    cfg.UserModels,
 		AdminModels:   cfg.AdminModels,
 	}, logger)

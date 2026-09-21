@@ -13,6 +13,11 @@ type Config struct {
 	// Google OIDC session validation via oauth2-proxy.
 	OAuth2ProxyURL string
 	AllowedDomain  string
+	// Public host (no port) used as the Host header for the silent UI login:
+	// openchamber scopes its session cookie by the request host's port
+	// (oc_ui_session_<port> vs bare oc_ui_session), and browser traffic
+	// arrives via the public hostname without a port.
+	PublicHost string
 
 	// Docker
 	DockerHost string
@@ -97,6 +102,7 @@ func loadConfig() Config {
 		ListenAddr:     env("ORCH_LISTEN", ":8080"),
 		OAuth2ProxyURL: env("ORCH_OAUTH2_PROXY_URL", "http://oauth2-proxy:4180"),
 		AllowedDomain:  env("ORCH_ALLOWED_DOMAIN", "worqcompany.com"),
+		PublicHost:     env("ORCH_PUBLIC_HOST", "brain.worq.company"),
 		DockerHost:     env("ORCH_DOCKER_HOST", "unix:///var/run/docker.sock"),
 		Image:          env("ORCH_IMAGE", "openchamber:1.20.0"),
 		Network:        env("ORCH_NETWORK", "openchamber_default"),
