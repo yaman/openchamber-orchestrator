@@ -452,6 +452,12 @@ func (p *Provisioner) providersListed(ctx context.Context, providersURL string, 
 	if err != nil {
 		return false
 	}
+	// Same portless public host as Login: openchamber derives the expected
+	// session cookie name from the request host, so this must match the name
+	// the login issued or the request is rejected as unauthenticated.
+	if p.cfg.PublicHost != "" {
+		req.Host = p.cfg.PublicHost
+	}
 	req.Header.Set("Cookie", "oc_ui_session="+token)
 	resp, err := p.http.Do(req)
 	if err != nil {
